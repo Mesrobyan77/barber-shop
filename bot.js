@@ -43,7 +43,12 @@ function getArmeniaNow() {
 }
 
 async function getAIResponse(messages) {
-    const models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+    // Ավելացրինք Mixtral-ը որպես 3-րդ տարբերակ
+    const models = [
+        "llama-3.3-70b-versatile", 
+        "llama-3.1-8b-instant", 
+        "mixtral-8x7b-32768"
+    ];
     const apiKey = process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY;
 
     for (const model of models) {
@@ -54,12 +59,12 @@ async function getAIResponse(messages) {
                 temperature: 0.6,
             }, { 
                 headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-                timeout: 8000 
+                timeout: 5000 // Կրճատեցի timeout-ը, որ արագ փորձի բոլորը
             });
             
-            return response.data.choices[0].message.content; // Եթե հաջողվեց, վերադարձնում ենք պատասխանը
+            return response.data.choices[0].message.content;
         } catch (e) {
-            console.error(`Մոդելը (${model}) ձախողվեց:`, e.message);
+            console.log(`⚠️ ${model} ձախողվեց: Status: ${e.response?.status}`);
             if (model === models[models.length - 1]) throw e;
         }
     }
