@@ -32,6 +32,8 @@ const mainKeyboard = Markup.keyboard([
     ["⚙️ Իմ տվյալները"]
 ]).resize();
 
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 function formatDate(date) {
     return new Date(date).toLocaleDateString("hy-AM", { year: "numeric", month: "long", day: "numeric" });
 }
@@ -91,6 +93,12 @@ bot.action("change_name", async (ctx) => {
     await ctx.answerCbQuery();
 });
 
+bot.action("change_phone", async (ctx) => {
+    userStates[ctx.from.id] = { step: "waiting_for_phone" };
+    await ctx.reply("Մուտքագրեք Ձեր նոր հեռախոսահամարը (օրինակ՝ +37494123456) կամ կիսվեք կոնտակտով։ 📱", 
+        Markup.keyboard([[Markup.button.contactRequest("📱 Կիսվել համարով"), "🔙 Չեղարկել"]]).resize().oneTime());
+    await ctx.answerCbQuery();
+});
 // ---------------------------------------------------------
 // 3. ՀԻՄՆԱԿԱՆ ՏԵՔՍՏԱՅԻՆ ՄՇԱԿՈՒՄ (AI + LOGIC)
 // ---------------------------------------------------------
@@ -99,7 +107,7 @@ bot.on("text", async (ctx, next) => {
     const userId = ctx.from.id;
     const text = ctx.message.text;
     const lowerText = text.toLowerCase().trim();
-
+    await ctx.sendChatAction("typing");
     // 1. Ստուգում ենք՝ արդյոք սա մենյուի հիմնական կոճակներից է
     const mainButtons = ["📅 Ամրագրել ժամ", "ℹ️ Ծառայություններ և գներ", "📞 Կապ", "⚙️ Իմ տվյալները", "🔙 Չեղարկել"];
     
@@ -113,6 +121,24 @@ bot.on("text", async (ctx, next) => {
         await User.findOneAndUpdate({ telegramId: userId }, { name: text.trim() });
         delete userStates[userId];
         return ctx.reply(`✅ Անունը թարմացվեց՝ **${text.trim()}**`, mainKeyboard);
+    }
+    if (userStates[userId]?.step === "waiting_for_name") {
+        if (text.length < 2) return ctx.reply("Անունը շատ կարճ է:");
+        await User.findOneAndUpdate({ telegramId: userId }, { name: text.trim() });
+        delete userStates[userId];
+        return ctx.reply(`✅ Անունը թարմացվեց՝ **${text.trim()}**`, mainKeyboard);
+    }
+
+    // ՆՈՐ: Համարի փոփոխություն
+    if (userStates[userId]?.step === "waiting_for_phone") {
+        // Պարզ ստուգում համարի ձևաչափի համար
+        const phoneRegex = /^\+?[0-9]{9,15}$/;
+        if (!phoneRegex.test(text.replace(/\s/g, ""))) {
+            return ctx.reply("Խնդրում եմ մուտքագրել վավեր հեռախոսահամար:");
+        }
+        await User.findOneAndUpdate({ telegramId: userId }, { phoneNumber: text.trim() });
+        delete userStates[userId];
+        return ctx.reply(`✅ Հեռախոսահամարը թարմացվեց՝ **${text.trim()}**`, mainKeyboard);
     }
 
     // 3. Արագ արձագանքներ
@@ -140,6 +166,9 @@ bot.on("text", async (ctx, next) => {
                 "Content-Type": "application/json" 
             } 
         });
+        
+        await delay(2000);
+
         
         await ctx.reply(response.data.choices[0].message.content, mainKeyboard);
     } catch (e) {
@@ -202,11 +231,16 @@ bot.hears("⚙️ Իմ տվյալները", async (ctx) => {
     if (!user) return ctx.reply("Դուք գրանցված չեք։");
     const activeApt = await Appointment.findOne({ telegramId: ctx.from.id, startTime: { $gte: getArmeniaNow() } });
     let msg = `👤 **Անուն:** ${user.name}\n📱 **Համար:** ${user.phoneNumber}\n`;
-    const btns = [[Markup.button.callback("🔄 Փոխել անունը", "change_name")]];
+    const btns = [
+        [
+            Markup.button.callback("🔄 Փոխել անունը", "change_name"),
+            Markup.button.callback("📱 Փոխել համարը", "change_phone")
+        ]
+    ];
     if (activeApt) {
-        msg += `\n✅ **Ակտիվ ամրագրում:** ${formatDate(activeApt.startTime)}, ${activeApt.startTime.getHours()}:00`;
+        msg += `\n✅ **Ակտիվ ամրագրում:** ${formatDate(activeApt.startTime)}, ${activeApt.startTime.getHours().padStart(2, '0')}:00`;
         btns.push([Markup.button.callback("❌ Չեղարկել ամրագրումը", "cancel_booking")]);
-    } else {
+    }else {
         const nearest = await getNearestSlot();
         if (nearest) msg += `\n✨ **Ամենամոտ ազատ ժամը:** ${nearest.day}, ${nearest.time}`;
     }
