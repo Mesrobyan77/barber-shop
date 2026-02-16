@@ -34,21 +34,40 @@ function formatDate(date) {
 async function getAvailableSlots(date) {
     const slots = [];
     const startHour = 9, endHour = 20;
-    const now = new Date();
     
-    const dStart = new Date(date).setHours(0, 0, 0, 0);
-    const dEnd = new Date(date).setHours(23, 59, 59, 999);
-    const appointments = await Appointment.find({ startTime: { $gte: dStart, $lte: dEnd } });
+    // Սա ստեղծում է ընթացիկ ժամանակը հենց հիմա
+    const now = new Date(); 
+    
+    const dStart = new Date(date);
+    dStart.setHours(0, 0, 0, 0);
+    
+    const dEnd = new Date(date);
+    dEnd.setHours(23, 59, 59, 999);
+
+    const appointments = await Appointment.find({ 
+        startTime: { $gte: dStart, $lte: dEnd } 
+    });
 
     for (let h = startHour; h < endHour; h++) {
+        // Կարևոր է ամեն անգամ ստեղծել նոր օբյեկտ տվյալ օրվա համար
         const sTime = new Date(date);
         sTime.setHours(h, 0, 0, 0);
 
-        // Ցույց չտալ այն ժամերը, որոնք արդեն անցել են այսօր
-        if (sTime < now) continue;
+        // ՀԱՄԵՄԱՏՈՒԹՅՈՒՆ.
+        // getTime() օգտագործելը ամենաապահով ձևն է միլիվայրկյաններով համեմատելու համար
+        if (sTime.getTime() < now.getTime()) {
+            continue; // Եթե անցյալ է, բաց թողնել
+        }
 
-        if (!appointments.some((a) => sTime >= a.startTime && sTime < a.endTime)) {
-            slots.push({ time: `${h.toString().padStart(2, "0")}:00`, date: sTime });
+        const isBusy = appointments.some((a) => {
+            return sTime.getTime() >= a.startTime.getTime() && sTime.getTime() < a.endTime.getTime();
+        });
+
+        if (!isBusy) {
+            slots.push({ 
+                time: `${h.toString().padStart(2, "0")}:00`, 
+                date: sTime 
+            });
         }
     }
     return slots;
