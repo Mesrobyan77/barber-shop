@@ -246,24 +246,39 @@ bot.action(/time_(.+)/, async (ctx) => {
 });
 
 bot.hears("⚙️ Իմ տվյալները", async (ctx) => {
-    const user = await User.findOne({ telegramId: ctx.from.id });
-    if (!user) return ctx.reply("Դուք գրանցված չեք։");
-    const activeApt = await Appointment.findOne({ telegramId: ctx.from.id, startTime: { $gte: getArmeniaNow() } });
-    let msg = `👤 **Անուն:** ${user.name}\n📱 **Համար:** ${user.phoneNumber}\n`;
-    const btns = [
-        [
-            Markup.button.callback("🔄 Փոխել անունը", "change_name"),
-            Markup.button.callback("📱 Փոխել համարը", "change_phone")
-        ]
-    ];
-    if (activeApt) {
-        msg += `\n✅ **Ակտիվ ամրագրում:** ${formatDate(activeApt.startTime)}, ${activeApt.startTime.getHours().padStart(2, '0')}:00`;
-        btns.push([Markup.button.callback("❌ Չեղարկել ամրագրումը", "cancel_booking")]);
-    }else {
-        const nearest = await getNearestSlot();
-        if (nearest) msg += `\n✨ **Ամենամոտ ազատ ժամը:** ${nearest.day}, ${nearest.time}`;
+    try {
+        const user = await User.findOne({ telegramId: ctx.from.id });
+        if (!user) return ctx.reply("Դուք գրանցված չեք։");
+
+        const activeApt = await Appointment.findOne({ 
+            telegramId: ctx.from.id, 
+            startTime: { $gte: getArmeniaNow() } 
+        });
+
+        let msg = `👤 **Անուն:** ${user.name}\n📱 **Համար:** ${user.phoneNumber}\n`;
+        
+        const btns = [
+            [
+                Markup.button.callback("🔄 Փոխել անունը", "change_name"),
+                Markup.button.callback("📱 Փոխել համարը", "change_phone")
+            ]
+        ];
+
+        if (activeApt) {
+            // .getHours()-ը դարձնում ենք String, նոր կանչում padStart
+            const hour = String(activeApt.startTime.getHours()).padStart(2, '0');
+            msg += `\n✅ **Ակտիվ ամրագրում:** ${formatDate(activeApt.startTime)}, ժամը ${hour}:00`;
+            btns.push([Markup.button.callback("❌ Չեղարկել ամրագրումը", "cancel_booking")]);
+        } else {
+            const nearest = await getNearestSlot();
+            if (nearest) msg += `\n✨ **Ամենամոտ ազատ ժամը:** ${nearest.day}, ${nearest.time}`;
+        }
+
+        await ctx.reply(msg, { parse_mode: "Markdown", ...Markup.inlineKeyboard(btns) });
+    } catch (e) {
+        console.error(e);
+        await ctx.reply("Տեղի է ունեցել սխալ տվյալները բեռնելիս։");
     }
-    await ctx.reply(msg, { parse_mode: "Markdown", ...Markup.inlineKeyboard(btns) });
 });
 
 bot.hears("ℹ️ Ծառայություններ և գներ", (ctx) => ctx.reply(`📋 ✂️ Կտրվածք: ${HAIRCUT_PRICE}\n🧔 Մորուք: ${BEARD_PRICE}`, mainKeyboard));
