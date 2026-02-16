@@ -162,14 +162,14 @@ bot.on("text", async (ctx, next) => {
             temperature: 0.5,
         }, { 
             headers: { 
-                "Authorization": `Bearer ${process.env.GROQ_API_KEY}`, // Ստուգիր այս key-ի անունը (.env-ում)
+                "Authorization": `Bearer ${process.env.GEMINI_API_KEY}`, // Ստուգիր այս key-ի անունը (.env-ում)
                 "Content-Type": "application/json" 
             } 
         });
         
         await delay(2000);
 
-        
+
         await ctx.reply(response.data.choices[0].message.content, mainKeyboard);
     } catch (e) {
         console.error("AI Error:", e);
