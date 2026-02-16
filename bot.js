@@ -24,50 +24,48 @@ const userStates = {};
 connectDB();
 
 // ---------------------------------------------------------
-// 1. ՕԺԱՆԴԱԿ ՖՈՒՆԿՑԻԱՆԵՐ
+// 1. ՕԺԱՆԴԱԿ ՖՈՒՆԿՑԻԱՆԵՐ (Timezone Fix)
 // ---------------------------------------------------------
+const mainKeyboard = Markup.keyboard([
+    ["📅 Ամրագրել ժամ"],
+    ["ℹ️ Ծառայություններ և գներ", "📞 Կապ"],
+    ["⚙️ Իմ տվյալները"]
+]).resize();
 
 function formatDate(date) {
     return new Date(date).toLocaleDateString("hy-AM", { year: "numeric", month: "long", day: "numeric" });
 }
 
+// Ստանում ենք Հայաստանի ներկա ժամանակը անկախ սերվերի տեղից
+function getArmeniaNow() {
+    return new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Yerevan" }));
+}
+
 async function getAvailableSlots(date) {
     const slots = [];
     const startHour = 9, endHour = 20;
-    
-    // Սա ստեղծում է ընթացիկ ժամանակը հենց հիմա
-    const now = new Date(); 
+    const nowInArmenia = getArmeniaNow();
     
     const dStart = new Date(date);
     dStart.setHours(0, 0, 0, 0);
-    
     const dEnd = new Date(date);
     dEnd.setHours(23, 59, 59, 999);
 
-    const appointments = await Appointment.find({ 
-        startTime: { $gte: dStart, $lte: dEnd } 
-    });
+    const appointments = await Appointment.find({ startTime: { $gte: dStart, $lte: dEnd } });
 
     for (let h = startHour; h < endHour; h++) {
-        // Կարևոր է ամեն անգամ ստեղծել նոր օբյեկտ տվյալ օրվա համար
         const sTime = new Date(date);
         sTime.setHours(h, 0, 0, 0);
 
-        // ՀԱՄԵՄԱՏՈՒԹՅՈՒՆ.
-        // getTime() օգտագործելը ամենաապահով ձևն է միլիվայրկյաններով համեմատելու համար
-        if (sTime.getTime() < now.getTime()) {
-            continue; // Եթե անցյալ է, բաց թողնել
-        }
+        // Համեմատում ենք Հայաստանի իրական ժամանակի հետ
+        if (sTime.getTime() < nowInArmenia.getTime()) continue;
 
-        const isBusy = appointments.some((a) => {
-            return sTime.getTime() >= a.startTime.getTime() && sTime.getTime() < a.endTime.getTime();
-        });
+        const isBusy = appointments.some((a) => 
+            sTime.getTime() >= a.startTime.getTime() && sTime.getTime() < a.endTime.getTime()
+        );
 
         if (!isBusy) {
-            slots.push({ 
-                time: `${h.toString().padStart(2, "0")}:00`, 
-                date: sTime 
-            });
+            slots.push({ time: `${h.toString().padStart(2, "0")}:00`, date: sTime });
         }
     }
     return slots;
@@ -75,7 +73,7 @@ async function getAvailableSlots(date) {
 
 async function getNearestSlot() {
     for (let i = 0; i < 7; i++) {
-        const d = new Date();
+        const d = getArmeniaNow();
         d.setDate(d.getDate() + i);
         const slots = await getAvailableSlots(d);
         if (slots.length > 0) {
@@ -83,18 +81,6 @@ async function getNearestSlot() {
         }
     }
     return null;
-}
-
-async function askPhoneNumber(ctx) {
-    const userId = ctx.from.id;
-    userStates[userId] = { step: "awaiting_phone" };
-    await ctx.reply(
-        "Ամրագրման համար անհրաժեշտ է հաստատել Ձեր հեռախոսահամարը։",
-        Markup.keyboard([
-            [Markup.button.contactRequest("📱 Կիսվել հեռախոսահամարով")],
-            ["🔙 Չեղարկել"]
-        ]).resize().oneTime()
-    );
 }
 
 // ---------------------------------------------------------
@@ -121,12 +107,42 @@ async function getAIResponse(userMessage) {
         );
         return response.data.choices[0].message.content;
     } catch (error) {
-        return `Ներողություն, ես կարող եմ պատասխանել միայն վարսավիրանոցին վերաբերող հարցերին։ 😊 Ամրագրելու համար սեղմեք համապատասխան կոճակը:`;
+        return `Ներողություն, տեխնիկական խնդիր: Խնդրում եմ օգտվել կոճակներից:`;
     }
 }
 
 // ---------------------------------------------------------
-// 3. BOT COMMANDS & ACTIONS
+// 3. ACTIONS (Չեղարկում + Ադմինի Notify)
+// ---------------------------------------------------------
+
+bot.action("cancel_booking", async (ctx) => {
+    const userId = ctx.from.id;
+    const now = getArmeniaNow();
+    
+    // Գտնում ենք տվյալները նախքան ջնջելը
+    const apt = await Appointment.findOne({ telegramId: userId, startTime: { $gte: now } });
+
+    if (apt) {
+        const user = await User.findOne({ telegramId: userId });
+        const timeStr = `${apt.startTime.getHours().toString().padStart(2, "0")}:00`;
+        const dateStr = formatDate(apt.startTime);
+
+        await Appointment.deleteOne({ _id: apt._id });
+
+        // Օգտատիրոջ հաղորդագրության թարմացում
+        await ctx.editMessageText(`❌ **Ամրագրումը չեղարկված է:**\n\n${dateStr}, ժամը ${timeStr} նորից ազատ է:`, { parse_mode: "Markdown" });
+
+        // Ադմինին նամակ ուղարկելը
+        const adminMsg = `⚠️ **ՉԵՂԱՐԿՈՒՄ**\n\n👤 Հաճախորդ: ${user ? user.name : apt.userName}\n📱 Համար: ${user ? user.phoneNumber : 'Անհայտ'}\n📅 Օր: ${dateStr}\n⏰ Ժամ: ${timeStr}`;
+        bot.telegram.sendMessage(ADMIN_CHAT_ID, adminMsg, { parse_mode: "Markdown" });
+    } else {
+        await ctx.answerCbQuery("Ակտիվ ամրագրում չգտնվեց:", { show_alert: true });
+    }
+    await ctx.answerCbQuery();
+});
+
+// ---------------------------------------------------------
+// 4. ՄԵՆՅՈՒ ԵՎ ՀՐԱՄԱՆՆԵՐ
 // ---------------------------------------------------------
 
 bot.command("start", async (ctx) => {
@@ -138,62 +154,25 @@ bot.command("start", async (ctx) => {
     await ctx.reply(`Բարի գալուստ ${SHOP_NAME}! 👋`, keyboard);
 });
 
-bot.hears("⚙️ Իմ տվյալները", async (ctx) => {
-    const userId = ctx.from.id;
-    const user = await User.findOne({ telegramId: userId });
-    if (!user) return ctx.reply("Դուք դեռ գրանցված չեք։");
-
-    const activeApt = await Appointment.findOne({ telegramId: userId, startTime: { $gte: new Date() } });
-
-    let msg = `👤 Անուն: ${user.name}\n📱 Համար: ${user.phoneNumber}\n`;
-    const buttons = [[Markup.button.callback("🔄 Փոխել հեռախոսահամարը", "change_phone")]];
-
-    if (activeApt) {
-        msg += `\n✅ Ակտիվ ամրագրում. ${formatDate(activeApt.startTime)}, ժամը ${activeApt.startTime.getHours()}:00`;
-        buttons.push([Markup.button.callback("❌ Չեղարկել ամրագրումը", "cancel_booking")]);
-    } else {
-        const nearest = await getNearestSlot();
-        if (nearest) msg += `\n✨ Ամենամոտ ազատ ժամը. ${nearest.day}, ${nearest.time}`;
-    }
-
-    await ctx.reply(msg, Markup.inlineKeyboard(buttons));
-});
-
-bot.action("cancel_booking", async (ctx) => {
-    const userId = ctx.from.id;
-    const apt = await Appointment.findOne({ telegramId: userId, startTime: { $gte: new Date() } });
-
-    if (apt) {
-        await Appointment.deleteOne({ _id: apt._id });
-        await ctx.editMessageText("❌ **Ամրագրումը չեղարկված է:** Ժամը նորից ազատ է:");
-    } else {
-        await ctx.answerCbQuery("Ակտիվ ամրագրում չգտնվեց:", { show_alert: true });
-    }
-    await ctx.answerCbQuery();
-});
-
-// ---------------------------------------------------------
-// 4. FLOW HANDLERS (Booking)
-// ---------------------------------------------------------
-
 bot.hears("📅 Ամրագրել ժամ", async (ctx) => {
-    const userId = ctx.from.id;
-    const user = await User.findOne({ telegramId: userId });
-    if (!user) return askPhoneNumber(ctx);
-
-    userStates[userId] = { step: "select_service" };
+    const user = await User.findOne({ telegramId: ctx.from.id });
+    if (!user) {
+        return ctx.reply("Ամրագրման համար հաստատեք հեռախոսահամարը՝", 
+            Markup.keyboard([[Markup.button.contactRequest("📱 Կիսվել հեռախոսահամարով")], ["🔙 Չեղարկել"]]).resize().oneTime());
+    }
+    userStates[ctx.from.id] = { step: "select_service" };
     await ctx.reply("Ընտրեք ծառայությունը՝", Markup.inlineKeyboard([
-        [Markup.button.callback("✂️ Կտրվածք (60 րոպե)", "service_Haircut")],
-        [Markup.button.callback("🧔 Մորուք (30 րոպե)", "service_Beard")],
+        [Markup.button.callback("✂️ Կտրվածք", "service_Haircut")],
+        [Markup.button.callback("🧔 Մորուք", "service_Beard")]
     ]));
 });
 
 bot.action(/service_(.+)/, async (ctx) => {
     const service = ctx.match[1];
-    userStates[ctx.from.id] = { service, step: "select_date" };
+    userStates[ctx.from.id] = { service };
     const btns = [];
     for (let i = 0; i < 7; i++) {
-        const d = new Date();
+        const d = getArmeniaNow();
         d.setDate(d.getDate() + i);
         btns.push([Markup.button.callback(i === 0 ? "Այսօր" : formatDate(d).split(",")[0], `date_${d.toISOString().split("T")[0]}`)]);
     }
@@ -206,8 +185,7 @@ bot.action(/date_(.+)/, async (ctx) => {
     const slots = await getAvailableSlots(new Date(dateStr));
 
     if (slots.length === 0) {
-        return ctx.editMessageText("Այս օրվա համար ազատ ժամեր չկան։ Ընտրեք այլ օր։", 
-            Markup.inlineKeyboard([[Markup.button.callback("« Վերադառնալ", "service_Haircut")]]));
+        return ctx.editMessageText("Այս օրվա համար ազատ ժամեր չկան։ Ընտրեք այլ օր։");
     }
 
     const btns = slots.map((s) => [Markup.button.callback(s.time, `time_${s.time}`)]);
@@ -220,7 +198,6 @@ bot.action(/time_(.+)/, async (ctx) => {
 
     const start = new Date(state.date);
     start.setHours(parseInt(time.split(":")[0]), 0, 0, 0);
-    const end = new Date(start.getTime() + SERVICE_DURATION[state.service] * 60000);
 
     const apt = new Appointment({
         userId: user._id,
@@ -228,70 +205,75 @@ bot.action(/time_(.+)/, async (ctx) => {
         userName: user.name,
         serviceType: state.service,
         startTime: start,
-        endTime: end,
+        endTime: new Date(start.getTime() + SERVICE_DURATION[state.service] * 60000)
     });
     await apt.save();
 
-    // Հաստատման նամակ՝ «Չեղարկել» կոճակով
     await ctx.editMessageText(
         `✅ **Ամրագրված է!**\n\n👤 ${user.name}\n✂️ ${state.service}\n📅 ${formatDate(start)}\n⏰ ${time}`, 
         { 
             parse_mode: "Markdown",
-            ...Markup.inlineKeyboard([
-                [Markup.button.callback("❌ Չեղարկել այս ամրագրումը", "cancel_booking")]
-            ])
+            ...Markup.inlineKeyboard([[Markup.button.callback("❌ Չեղարկել այս ամրագրումը", "cancel_booking")]])
         }
     );
 
-    bot.telegram.sendMessage(ADMIN_CHAT_ID, `🔔 **Նոր ամրագրում**\n👤 ${user.name}\n📱 ${user.phoneNumber}\n✂️ ${state.service}\n⏰ ${time}`, { parse_mode: "Markdown" });
+    bot.telegram.sendMessage(ADMIN_CHAT_ID, `🔔 **Նոր ամրագրում**\n👤 ${user.name}\n📱 ${user.phoneNumber}\n⏰ ${time} (${formatDate(start)})`, { parse_mode: "Markdown" });
     delete userStates[userId];
 });
 
-// ---------------------------------------------------------
-// 5. OTHER HANDLERS
-// ---------------------------------------------------------
-
-bot.on("contact", async (ctx) => {
-    const contact = ctx.message.contact;
-    const user = await User.findOneAndUpdate(
-        { telegramId: ctx.from.id },
-        { name: contact.first_name + (contact.last_name ? " " + contact.last_name : ""), phoneNumber: contact.phone_number },
-        { upsert: true, new: true }
-    );
-    await ctx.reply(`✅ Շնորհակալություն, ${user.name}։ Այժմ կարող եք ամրագրել։`, Markup.removeKeyboard());
-});
-
-bot.hears("ℹ️ Ծառայություններ և գներ", (ctx) => ctx.reply(`📋 Ծառայություններ՝\n✂️ Կտրվածք: ${HAIRCUT_PRICE}\n🧔 Մորուք: ${BEARD_PRICE}`));
-bot.hears("📞 Կապ", (ctx) => ctx.reply(`📞 Կապ՝ ${CONTACT_INFO}`));
-
-bot.hears("🔙 Չեղարկել", (ctx) => {
-    delete userStates[ctx.from.id];
-    ctx.reply("Գործողությունը չեղարկվեց:", Markup.keyboard([["📅 Ամրագրել ժամ"], ["ℹ️ Ծառայություններ և գներ", "📞 Կապ"]]).resize());
+bot.hears("⚙️ Իմ տվյալները", async (ctx) => {
+    const user = await User.findOne({ telegramId: ctx.from.id });
+    if (!user) return ctx.reply("Դուք գրանցված չեք։");
+    
+    const activeApt = await Appointment.findOne({ telegramId: ctx.from.id, startTime: { $gte: getArmeniaNow() } });
+    let msg = `👤 Անուն: ${user.name}\n📱 Համար: ${user.phoneNumber}\n`;
+    const btns = [[Markup.button.callback("🔄 Փոխել հեռախոսահամարը", "change_phone")]];
+    
+    if (activeApt) {
+        msg += `\n✅ Ակտիվ ամրագրում: ${formatDate(activeApt.startTime)}, ${activeApt.startTime.getHours()}:00`;
+        btns.push([Markup.button.callback("❌ Չեղարկել ամրագրումը", "cancel_booking")]);
+    } else {
+        const nearest = await getNearestSlot();
+        if (nearest) msg += `\n✨ Ամենամոտ ազատ ժամը: ${nearest.day}, ${nearest.time}`;
+    }
+    await ctx.reply(msg, Markup.inlineKeyboard(btns));
 });
 
 bot.on("text", async (ctx) => {
-    const text = ctx.message.text.toLowerCase();
-    if (["այո", "ha", "ok", "ուզում եմ"].some(w => text.includes(w))) {
-        return ctx.reply("Սեղմեք կոճակը ամրագրելու համար:", Markup.keyboard([["📅 Ամրագրել ժամ"]]).resize());
-    }
+    const text = ctx.message.text;
+
+    // 1. Եթե սեղմվել է հիմնական կոճակներից մեկը, AI-ն չպետք է խառնվի
+    const mainButtons = ["📅 Ամրագրել ժամ", "ℹ️ Ծառայություններ և գներ", "📞 Կապ", "⚙️ Իմ տվյալները", "🔙 Չեղարկել"];
+    if (mainButtons.includes(text)) return;
+
+    // 2. Ուղարկում ենք հարցը AI-ին
     const aiRes = await getAIResponse(text);
+
+    // 3. Պատասխանում ենք AI-ով և ՆՈՐԻՑ ՑՈՒՅՑ ՏԱԼԻՍ ԿՈՃԱԿՆԵՐԸ
+    await ctx.reply(aiRes, mainKeyboard);
+});
+
+bot.hears("ℹ️ Ծառայություններ և գներ", (ctx) => ctx.reply(`📋 ✂️ Կտրվածք: ${HAIRCUT_PRICE}\n🧔 Մորուք: ${BEARD_PRICE}`));
+bot.hears("📞 Կապ", (ctx) => ctx.reply(`📞 Կապ: ${CONTACT_INFO}`));
+
+bot.on("text", async (ctx) => {
+    const aiRes = await getAIResponse(ctx.message.text);
     await ctx.reply(aiRes);
 });
 
 // ---------------------------------------------------------
-// 6. CRON & SERVER
+// 5. SERVER & CRON
 // ---------------------------------------------------------
 
 cron.schedule("0 3 * * *", async () => {
-    const today = new Date();
+    const today = getArmeniaNow();
     today.setHours(0, 0, 0, 0);
     await Appointment.deleteMany({ startTime: { $lt: today } });
 }, { timezone: "Asia/Yerevan" });
 
-app.get("/", (req, res) => res.send("🤖 Bot is active!"));
-app.listen(PORT, "0.0.0.0", () => console.log(`🚀 Server on port ${PORT}`));
+app.get("/", (req, res) => res.send("🤖 Bot Active"));
+app.listen(PORT, "0.0.0.0", () => console.log(`🚀 Server running on ${PORT}`));
 
-bot.launch().then(() => console.log("🤖 Telegram bot started!"));
-
+bot.launch();
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
