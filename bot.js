@@ -241,16 +241,53 @@ bot.hears("⚙️ Իմ տվյալները", async (ctx) => {
 
 bot.on("text", async (ctx) => {
     const text = ctx.message.text;
-
-    // 1. Եթե սեղմվել է հիմնական կոճակներից մեկը, AI-ն չպետք է խառնվի
     const mainButtons = ["📅 Ամրագրել ժամ", "ℹ️ Ծառայություններ և գներ", "📞 Կապ", "⚙️ Իմ տվյալները", "🔙 Չեղարկել"];
+    
+    // Եթե օգտատերը սեղմել է մենյուի կոճակներից մեկը, AI-ն չպետք է միջամտի
     if (mainButtons.includes(text)) return;
 
-    // 2. Ուղարկում ենք հարցը AI-ին
-    const aiRes = await getAIResponse(text);
+    try {
+        // 1. Ստանում ենք այսօրվա ազատ ժամերը
+        const todaySlots = await getAvailableSlots(getArmeniaNow());
+        
+        // 2. Պատրաստում ենք տեքստային տվյալները AI-ի համար
+        let slotsInfo = "";
+        if (todaySlots.length > 0) {
+            slotsInfo = `Այսօրվա ազատ ժամերն են՝ ${todaySlots.map(s => s.time).join(", ")}:`;
+        } else {
+            slotsInfo = "Այսօրվա համար այլևս ազատ ժամ չկա:";
+        }
 
-    // 3. Պատասխանում ենք AI-ով և ՆՈՐԻՑ ՑՈՒՅՑ ՏԱԼԻՍ ԿՈՃԱԿՆԵՐԸ
-    await ctx.reply(aiRes, mainKeyboard);
+        // 3. Փոխանցում ենք այս տվյալները AI-ին (Context Injection)
+        const promptWithSlots = `${systemPrompt}
+        
+        ԿԱՐԵՎՈՐ ՏԵՂԵԿՈՒԹՅՈՒՆ ԺԱՄԵՐԻ ՄԱՍԻՆ:
+        ${slotsInfo}
+        
+        Եթե հաճախորդը հարցնում է մոտակա կամ ազատ ժամերի մասին, օգտագործիր վերոնշյալ ցուցակը: 
+        Եթե ազատ ժամ կա, նշիր դրանք և հարցրու՝ արդյոք ցանկանում է ամրագրել:`;
+
+        const response = await axios.post("https://api.groq.com/openai/v1/chat/completions", {
+            model: "llama-3.3-70b-versatile",
+            messages: [
+                { role: "system", content: promptWithSlots },
+                { role: "user", content: text }
+            ],
+            temperature: 0.7,
+        }, { 
+            headers: { 
+                Authorization: `Bearer ${process.env.GEMINI_API_KEY}`, 
+                "Content-Type": "application/json" 
+            } 
+        });
+        
+        const aiRes = response.data.choices[0].message.content;
+        await ctx.reply(aiRes, mainKeyboard);
+
+    } catch (e) {
+        console.error("AI Error:", e);
+        await ctx.reply("Ներողություն, չհասկացա Ձեզ: Խնդրում եմ օգտվել կոճակներից:", mainKeyboard);
+    }
 });
 
 bot.hears("ℹ️ Ծառայություններ և գներ", (ctx) => ctx.reply(`📋 ✂️ Կտրվածք: ${HAIRCUT_PRICE}\n🧔 Մորուք: ${BEARD_PRICE}`));
