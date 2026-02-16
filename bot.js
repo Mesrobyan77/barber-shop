@@ -42,6 +42,29 @@ function getArmeniaNow() {
     return new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Yerevan" }));
 }
 
+async function getAIResponse(messages) {
+    const models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+    const apiKey = process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY;
+
+    for (const model of models) {
+        try {
+            const response = await axios.post("https://api.groq.com/openai/v1/chat/completions", {
+                model: model,
+                messages: messages,
+                temperature: 0.6,
+            }, { 
+                headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+                timeout: 8000 
+            });
+            
+            return response.data.choices[0].message.content; // Եթե հաջողվեց, վերադարձնում ենք պատասխանը
+        } catch (e) {
+            console.error(`Մոդելը (${model}) ձախողվեց:`, e.message);
+            if (model === models[models.length - 1]) throw e;
+        }
+    }
+}
+
 async function getAvailableSlots(date) {
     const slots = [];
     const startHour = 9, endHour = 20;
@@ -103,90 +126,15 @@ bot.action("change_phone", async (ctx) => {
 // 3. ՀԻՄՆԱԿԱՆ ՏԵՔՍՏԱՅԻՆ ՄՇԱԿՈՒՄ (AI + LOGIC)
 // ---------------------------------------------------------
 
-// bot.on("text", async (ctx, next) => {
-//     const userId = ctx.from.id;
-//     const text = ctx.message.text;
-//     const lowerText = text.toLowerCase().trim();
-//     await ctx.sendChatAction("typing");
-//     // 1. Ստուգում ենք՝ արդյոք սա մենյուի հիմնական կոճակներից է
-//     const mainButtons = ["📅 Ամրագրել ժամ", "ℹ️ Ծառայություններ և գներ", "📞 Կապ", "⚙️ Իմ տվյալները", "🔙 Չեղարկել"];
-    
-//     if (mainButtons.includes(text)) {
-//         return next(); // Թույլ է տալիս, որ bot.hears-ը աշխատի
-//     }
-
-//     // 2. Անվան փոփոխության տրամաբանություն
-//     if (userStates[userId]?.step === "waiting_for_name") {
-//         if (text.length < 2) return ctx.reply("Անունը շատ կարճ է:");
-//         await User.findOneAndUpdate({ telegramId: userId }, { name: text.trim() });
-//         delete userStates[userId];
-//         return ctx.reply(`✅ Անունը թարմացվեց՝ **${text.trim()}**`, mainKeyboard);
-//     }
-//     if (userStates[userId]?.step === "waiting_for_name") {
-//         if (text.length < 2) return ctx.reply("Անունը շատ կարճ է:");
-//         await User.findOneAndUpdate({ telegramId: userId }, { name: text.trim() });
-//         delete userStates[userId];
-//         return ctx.reply(`✅ Անունը թարմացվեց՝ **${text.trim()}**`, mainKeyboard);
-//     }
-
-//     // ՆՈՐ: Համարի փոփոխություն
-//     if (userStates[userId]?.step === "waiting_for_phone") {
-//         // Պարզ ստուգում համարի ձևաչափի համար
-//         const phoneRegex = /^\+?[0-9]{9,15}$/;
-//         if (!phoneRegex.test(text.replace(/\s/g, ""))) {
-//             return ctx.reply("Խնդրում եմ մուտքագրել վավեր հեռախոսահամար:");
-//         }
-//         await User.findOneAndUpdate({ telegramId: userId }, { phoneNumber: text.trim() });
-//         delete userStates[userId];
-//         return ctx.reply(`✅ Հեռախոսահամարը թարմացվեց՝ **${text.trim()}**`, mainKeyboard);
-//     }
-
-//     // 3. Արագ արձագանքներ
-//     const confirmations = ["ayo", "ha", "ok", "այո", "հա", "լավ", "սկսենք", "uzum em"];
-//     if (confirmations.includes(lowerText)) {
-//         return ctx.reply("Շատ բարի: 😊 Խնդրում եմ սեղմել «📅 Ամրագրել ժամ» կոճակը:", mainKeyboard);
-//     }
-
-//     // 4. Եթե վերևի կետերից ոչ մեկը չէ, նոր ուղարկում ենք AI-ին
-//     try {
-//         const todaySlots = await getAvailableSlots(getArmeniaNow());
-//         const slotsInfo = todaySlots.length > 0 
-//             ? `Այսօրվա ազատ ժամերն են՝ ${todaySlots.map(s => s.time).join(", ")}` 
-//             : "Այսօրվա համար այլևս ազատ ժամ չկա:";
-
-//         const aiContext = `${systemPrompt}\n\nԿԱՐԵՎՈՐ:\n${slotsInfo}\nԵթե հաճախորդը ուզում է ամրագրել, ուղարկիր նրան սեղմելու "📅 Ամրագրել ժամ" կոճակը:`;
-
-//         const response = await axios.post("https://api.groq.com/openai/v1/chat/completions", {
-//             model: "llama-3.3-70b-versatile",
-//             messages: [{ role: "system", content: aiContext }, { role: "user", content: text }],
-//             temperature: 0.5,
-//         }, { 
-//             headers: { 
-//                 "Authorization": `Bearer ${process.env.GEMINI_API_KEY}`, // Ստուգիր այս key-ի անունը (.env-ում)
-//                 "Content-Type": "application/json" 
-//             } 
-//         });
-        
-//         await delay(2000);
-
-
-//         await ctx.reply(response.data.choices[0].message.content, mainKeyboard);
-//     } catch (e) {
-//         console.error("AI Error:", e);
-//         await ctx.reply("Ներողություն, չհասկացա Ձեզ: Խնդրում եմ օգտվել կոճակներից:", mainKeyboard);
-//     }
-// });
 
 bot.on("text", async (ctx, next) => {
     const userId = ctx.from.id;
     const text = ctx.message.text;
     const lowerText = text.toLowerCase().trim();
 
-    // 1. Ստուգում ենք հիմնական կոճակները (որպեսզի AI-ին չուղարկի)
+    // 1. Ստուգում ենք հիմնական կոճակները
     const mainButtons = ["📅 Ամրագրել ժամ", "ℹ️ Ծառայություններ և գներ", "📞 Կապ", "⚙️ Իմ տվյալները", "🔙 Չեղարկել"];
-    if (mainButtons.includes(text)) {
-        return next(); 
-    }
+    if (mainButtons.includes(text)) return next();
 
     // 2. Անվան կամ համարի փոփոխության ստուգում
     if (userStates[userId]?.step === "waiting_for_name") {
@@ -212,40 +160,33 @@ bot.on("text", async (ctx, next) => {
         return ctx.reply("Շատ բարի: 😊 Խնդրում եմ սեղմել «📅 Ամրագրել ժամ» կոճակը:", mainKeyboard);
     }
 
-    // 4. Եթե հասել է այստեղ, նոր ուղարկում ենք AI-ին
+    // 4. AI Մշակում (Fallback տրամաբանությամբ)
     try {
-        await ctx.sendChatAction("typing"); // Միացնում ենք Typing-ը միայն այստեղ
+        await ctx.sendChatAction("typing");
 
         const todaySlots = await getAvailableSlots(getArmeniaNow());
         const slotsInfo = todaySlots.length > 0 
             ? `Այսօրվա ազատ ժամերն են՝ ${todaySlots.map(s => s.time).join(", ")}` 
             : "Այսօրվա համար այլևս ազատ ժամ չկա:";
 
-        const aiContext = `${systemPrompt}\n\nԿԱՐԵՎՈՐ:\n${slotsInfo}`;
+        const messages = [
+            { role: "system", content: `${systemPrompt}\n\nԿԱՐԵՎՈՐ:\n${slotsInfo}` },
+            { role: "user", content: text }
+        ];
 
-        // ՈՒՇԱԴՐՈՒԹՅՈՒՆ: Ստուգիր API KEY-ի անունը քո .env ֆայլում (GROQ_API_KEY թե GEMINI_API_KEY)
-        const apiKey = process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY;
+        // Կանչում ենք մեր ստեղծած Fallback ֆունկցիան
+        const aiMessage = await getAIResponse(messages);
 
-        const response = await axios.post("https://api.groq.com/openai/v1/chat/completions", {
-            model: "llama-3.3-70b-versatile",
-            messages: [{ role: "system", content: aiContext }, { role: "user", content: text }],
-            temperature: 0.6,
-        }, { 
-            headers: { 
-                "Authorization": `Bearer ${apiKey}`, 
-                "Content-Type": "application/json" 
-            },
-            timeout: 10000 // 10 վայրկյան սպասելուց հետո կդադարեցնի, որ bot-ը չկախի
-        });
-        
-        await delay(2000); // 2 վայրկյան typing էֆեկտ
-        
-        const aiMessage = response.data.choices[0].message.content;
+        await delay(2000); 
         await ctx.reply(aiMessage, mainKeyboard);
 
     } catch (e) {
-        console.error("AI ERROR DETAIL:", e.response?.data || e.message); // Սա կօգնի տեսնել իրական սխալը terminal-ում
-        await ctx.reply("Կներեք, կապի հետ կապված խնդիր կա: Խնդրում եմ օգտվել կոճակներից:", mainKeyboard);
+        console.log("CRITICAL ERROR:", e.message);
+        if (e.response && e.response.status === 429) {
+            await ctx.reply("Ներողություն, այս պահին AI համակարգը ծանրաբեռնված է: Խնդրում եմ օգտվել կոճակներից:", mainKeyboard);
+        } else {
+            await ctx.reply("Կներեք, տեխնիկական խնդիր առաջացավ: Փորձեք օգտվել կոճակներից:", mainKeyboard);
+        }
     }
 });
 // ---------------------------------------------------------
