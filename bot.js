@@ -24,7 +24,7 @@ const userStates = {};
 connectDB();
 
 // ---------------------------------------------------------
-// 1. ՕԺԱՆԴԱԿ ՖՈՒՆԿՑԻԱՆԵՐ (Տրամաբանություն)
+// 1. ՕԺԱՆԴԱԿ ՖՈՒՆԿՑԻԱՆԵՐ
 // ---------------------------------------------------------
 
 function formatDate(date) {
@@ -44,10 +44,9 @@ async function getAvailableSlots(date) {
         const sTime = new Date(date);
         sTime.setHours(h, 0, 0, 0);
 
-        // Ֆիլտրում. Եթե այսօրվա ժամն արդեն անցել է, այն չենք ցուցադրում
+        // Ցույց չտալ այն ժամերը, որոնք արդեն անցել են այսօր
         if (sTime < now) continue;
 
-        // Ստուգում ենք բազայում՝ արդյոք զբաղված է
         if (!appointments.some((a) => sTime >= a.startTime && sTime < a.endTime)) {
             slots.push({ time: `${h.toString().padStart(2, "0")}:00`, date: sTime });
         }
@@ -108,7 +107,7 @@ async function getAIResponse(userMessage) {
 }
 
 // ---------------------------------------------------------
-// 3. BOT COMMANDS & MAIN MENU
+// 3. BOT COMMANDS & ACTIONS
 // ---------------------------------------------------------
 
 bot.command("start", async (ctx) => {
@@ -147,66 +146,26 @@ bot.action("cancel_booking", async (ctx) => {
 
     if (apt) {
         await Appointment.deleteOne({ _id: apt._id });
-        await ctx.reply("✅ Ձեր ամրագրումը հաջողությամբ չեղարկվեց։ Այդ ժամը նորից ազատ է։");
+        await ctx.editMessageText("❌ **Ամրագրումը չեղարկված է:** Ժամը նորից ազատ է:");
     } else {
-        await ctx.answerCbQuery("Ակտիվ ամրագրում չգտնվեց։", { show_alert: true });
+        await ctx.answerCbQuery("Ակտիվ ամրագրում չգտնվեց:", { show_alert: true });
     }
     await ctx.answerCbQuery();
 });
 
+// ---------------------------------------------------------
+// 4. FLOW HANDLERS (Booking)
+// ---------------------------------------------------------
+
 bot.hears("📅 Ամրագրել ժամ", async (ctx) => {
     const userId = ctx.from.id;
     const user = await User.findOne({ telegramId: userId });
-
     if (!user) return askPhoneNumber(ctx);
 
     userStates[userId] = { step: "select_service" };
     await ctx.reply("Ընտրեք ծառայությունը՝", Markup.inlineKeyboard([
         [Markup.button.callback("✂️ Կտրվածք (60 րոպե)", "service_Haircut")],
         [Markup.button.callback("🧔 Մորուք (30 րոպե)", "service_Beard")],
-    ]));
-});
-
-bot.hears("ℹ️ Ծառայություններ և գներ", (ctx) =>
-    ctx.reply(`📋 Ծառայություններ՝\n✂️ Կտրվածք: ${HAIRCUT_PRICE}\n🧔 Մորուք: ${BEARD_PRICE}\n🕒 09:00 - 20:00`)
-);
-
-bot.hears("📞 Կապ", (ctx) => ctx.reply(`📞 Կապ՝ ${CONTACT_INFO}\n📍 ${SHOP_NAME}`));
-
-bot.hears("🔙 Չեղարկել", (ctx) => {
-    delete userStates[ctx.from.id];
-    ctx.reply("Գործողությունը չեղարկվեց:", Markup.keyboard([
-        ["📅 Ամրագրել ժամ"],
-        ["ℹ️ Ծառայություններ և գներ", "📞 Կապ"]
-    ]).resize());
-});
-
-// ---------------------------------------------------------
-// 4. FLOW HANDLERS (Booking & Contact)
-// ---------------------------------------------------------
-
-bot.on("contact", async (ctx) => {
-    const userId = ctx.from.id;
-    const contact = ctx.message.contact;
-
-    if (contact.user_id !== userId) {
-        return ctx.reply("⚠️ Խնդրում եմ կիսվել հենց Ձեր հեռախոսահամարով:");
-    }
-
-    const user = await User.findOneAndUpdate(
-        { telegramId: userId },
-        { 
-            name: contact.first_name + (contact.last_name ? " " + contact.last_name : ""),
-            phoneNumber: contact.phone_number 
-        },
-        { upsert: true, new: true }
-    );
-
-    userStates[userId] = { step: "select_service" };
-    await ctx.reply(`✅ Շնորհակալություն, ${user.name}։ Համարը գրանցվեց։`, Markup.removeKeyboard());
-    await ctx.reply("Հիմա ընտրեք ծառայությունը՝", Markup.inlineKeyboard([
-        [Markup.button.callback("✂️ Կտրվածք", "service_Haircut")],
-        [Markup.button.callback("🧔 Մորուք", "service_Beard")]
     ]));
 });
 
@@ -254,39 +213,61 @@ bot.action(/time_(.+)/, async (ctx) => {
     });
     await apt.save();
 
-    await ctx.editMessageText(`✅ **Ամրագրված է!**\n\n👤 ${user.name}\n✂️ ${state.service}\n📅 ${formatDate(start)}\n⏰ ${time}`, { parse_mode: "Markdown" });
-    bot.telegram.sendMessage(ADMIN_CHAT_ID, `🔔 **Նոր ամրագրում**\n\n👤 ${user.name}\n📱 ${user.phoneNumber}\n✂️ ${state.service}\n⏰ ${time}`, { parse_mode: "Markdown" });
+    // Հաստատման նամակ՝ «Չեղարկել» կոճակով
+    await ctx.editMessageText(
+        `✅ **Ամրագրված է!**\n\n👤 ${user.name}\n✂️ ${state.service}\n📅 ${formatDate(start)}\n⏰ ${time}`, 
+        { 
+            parse_mode: "Markdown",
+            ...Markup.inlineKeyboard([
+                [Markup.button.callback("❌ Չեղարկել այս ամրագրումը", "cancel_booking")]
+            ])
+        }
+    );
+
+    bot.telegram.sendMessage(ADMIN_CHAT_ID, `🔔 **Նոր ամրագրում**\n👤 ${user.name}\n📱 ${user.phoneNumber}\n✂️ ${state.service}\n⏰ ${time}`, { parse_mode: "Markdown" });
     delete userStates[userId];
 });
 
-bot.on("text", async (ctx) => {
-    const text = ctx.message.text;
-    const confirmationWords = ["ayo", "այո", "ha", "հա", "uzum em", "ուզում եմ", "ok", "օք"];
-  
-    if (confirmationWords.includes(text.toLowerCase())) {
-        return ctx.reply("Շատ բարի! 😊 Սեղմեք կոճակը ամրագրելու համար:", Markup.keyboard([["📅 Ամրագրել ժամ"]]).resize());
-    }
+// ---------------------------------------------------------
+// 5. OTHER HANDLERS
+// ---------------------------------------------------------
 
+bot.on("contact", async (ctx) => {
+    const contact = ctx.message.contact;
+    const user = await User.findOneAndUpdate(
+        { telegramId: ctx.from.id },
+        { name: contact.first_name + (contact.last_name ? " " + contact.last_name : ""), phoneNumber: contact.phone_number },
+        { upsert: true, new: true }
+    );
+    await ctx.reply(`✅ Շնորհակալություն, ${user.name}։ Այժմ կարող եք ամրագրել։`, Markup.removeKeyboard());
+});
+
+bot.hears("ℹ️ Ծառայություններ և գներ", (ctx) => ctx.reply(`📋 Ծառայություններ՝\n✂️ Կտրվածք: ${HAIRCUT_PRICE}\n🧔 Մորուք: ${BEARD_PRICE}`));
+bot.hears("📞 Կապ", (ctx) => ctx.reply(`📞 Կապ՝ ${CONTACT_INFO}`));
+
+bot.hears("🔙 Չեղարկել", (ctx) => {
+    delete userStates[ctx.from.id];
+    ctx.reply("Գործողությունը չեղարկվեց:", Markup.keyboard([["📅 Ամրագրել ժամ"], ["ℹ️ Ծառայություններ և գներ", "📞 Կապ"]]).resize());
+});
+
+bot.on("text", async (ctx) => {
+    const text = ctx.message.text.toLowerCase();
+    if (["այո", "ha", "ok", "ուզում եմ"].some(w => text.includes(w))) {
+        return ctx.reply("Սեղմեք կոճակը ամրագրելու համար:", Markup.keyboard([["📅 Ամրագրել ժամ"]]).resize());
+    }
     const aiRes = await getAIResponse(text);
     await ctx.reply(aiRes);
 });
 
 // ---------------------------------------------------------
-// 5. ԱՎՏՈՄԱՏ ՄԱՔՐՈՒՄ (Ամեն օր 03:12)
+// 6. CRON & SERVER
 // ---------------------------------------------------------
-cron.schedule("* * * * *", async () => {
-    try {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        await Appointment.deleteMany({ startTime: { $lt: today } });
-    } catch (error) {
-        console.error("Cron Error:", error);
-    }
-}, { timezone: "Asia/Yerevan" });
 
-// ---------------------------------------------------------
-// 6. SERVER START
-// ---------------------------------------------------------
+cron.schedule("0 3 * * *", async () => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    await Appointment.deleteMany({ startTime: { $lt: today } });
+}, { timezone: "Asia/Yerevan" });
 
 app.get("/", (req, res) => res.send("🤖 Bot is active!"));
 app.listen(PORT, "0.0.0.0", () => console.log(`🚀 Server on port ${PORT}`));
